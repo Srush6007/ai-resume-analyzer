@@ -1,4 +1,4 @@
-from fastapi import APIRouter, UploadFile, File
+from fastapi import APIRouter, UploadFile, File, HTTPException
 from pypdf import PdfReader
 from io import BytesIO
 
@@ -7,14 +7,44 @@ router = APIRouter()
 
 @router.post("/upload")
 async def upload_resume(file: UploadFile = File(...)):
+    # Check file type
+    if file.content_type != "application/pdf":
+        raise HTTPException(
+            status_code=400,
+            detail="Only PDF files are allowed."
+        )
+
+    # Read file
     contents = await file.read()
 
-    reader = PdfReader(BytesIO(contents))
+    # Check if file is empty
+    if not contents:
+        raise HTTPException(
+            status_code=400,
+            detail="The uploaded file is empty."
+        )
 
-    text = ""
+    # Extract text from PDF
+    try:
+        reader = PdfReader(BytesIO(contents))
 
-    for page in reader.pages:
-        text += page.extract_text() or ""
+        text = ""
+
+        for page in reader.pages:
+            text += page.extract_text() or ""
+
+    except Exception:
+        raise HTTPException(
+            status_code=400,
+            detail="Could not read the PDF file."
+        )
+
+    # Check if PDF contains readable text
+    if not text.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="No readable text was found in the PDF."
+        )
 
     return {
         "filename": file.filename,
