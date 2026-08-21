@@ -1,4 +1,4 @@
-from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi import APIRouter, UploadFile, File, HTTPException, Form
 from pypdf import PdfReader
 from io import BytesIO
 
@@ -7,34 +7,16 @@ from app.services.resume_parser import (
     extract_sections
 )
 
-from app.services.resume_analyzer import analyze_resume
-from app.services.skill_analyzer import analyze_skills
+from app.services.ollama_service import (
+    analyze_resume,
+    match_resume_with_job
+)
 
 
 router = APIRouter()
 
 
-@router.post("/upload")
-async def upload_resume(file: UploadFile = File(...)):
-
-    # Check file type
-    if file.content_type != "application/pdf":
-        raise HTTPException(
-            status_code=400,
-            detail="Only PDF files are allowed."
-        )
-
-    # Read file
-    contents = await file.read()
-
-    # Check if file is empty
-    if not contents:
-        raise HTTPException(
-            status_code=400,
-            detail="The uploaded file is empty."
-        )
-
-    # Extract text from PDF
+def extract_pdf_text(contents: bytes):
     try:
         reader = PdfReader(BytesIO(contents))
 
@@ -49,30 +31,95 @@ async def upload_resume(file: UploadFile = File(...)):
             detail="Could not read the PDF file."
         )
 
-    # Check if PDF contains readable text
     if not text.strip():
         raise HTTPException(
             status_code=400,
             detail="No readable text was found in the PDF."
         )
 
-    # Clean extracted text
-    text = clean_resume_text(text)
+    return clean_resume_text(text)
 
-    # Extract resume sections
+
+@router.post("/upload")
+async def upload_resume(file: UploadFile = File(...)):
+
+    if file.content_type != "application/pdf":
+        raise HTTPException(
+            status_code=400,
+            detail="Only PDF files are allowed."
+        )
+
+    contents = await file.read()
+
+    if not contents:
+        raise HTTPException(
+            status_code=400,
+            detail="The uploaded file is empty."
+        )
+
+    text = extract_pdf_text(contents)
+
     sections = extract_sections(text)
 
-    # Analyze resume sections
-    analysis = analyze_resume(sections)
+    try:
+        ai_analysis = analyze_resume(text)
 
-    # Analyze technical skills
-    skill_analysis = analyze_skills(text)
+    except Exception as error:
+        raise HTTPException(
+            status_code=500,
+            detail=f"AI analysis failed: {error}"
+        )
 
     return {
         "filename": file.filename,
         "content_type": file.content_type,
         "text": text,
         "sections": sections,
-        "analysis": analysis,
-        "skill_analysis": skill_analysis
+        "ai_analysis": ai_analysis
+    }
+
+
+@router.post("/match")
+async def match_resume(
+    file: UploadFile = File(...),
+    job_description: str = Form(...)
+):
+
+    if file.content_type != "application/pdf":
+        raise HTTPException(
+            status_code=400,
+            detail="Only PDF files are allowed."
+        )
+
+    if not job_description.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="Job description cannot be empty."
+        )
+
+    contents = await file.read()
+
+    if not contents:
+        raise HTTPException(
+            status_code=400,
+            detail="The uploaded file is empty."
+        )
+
+    resume_text = extract_pdf_text(contents)
+
+    try:
+        match_result = match_resume_with_job(
+            resume_text,
+            job_description
+        )
+
+    except Exception as error:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Job matching failed: {error}"
+        )
+
+    return {
+        "filename": file.filename,
+        "match_result": match_result
     }
