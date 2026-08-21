@@ -1,22 +1,61 @@
-import requests
 import json
-import re
+import requests
 
 
 OLLAMA_URL = "http://host.docker.internal:11434/api/generate"
 MODEL_NAME = "qwen3:8b"
 
 
+def _call_ollama(prompt: str):
+    """Send a prompt to Ollama and return the parsed JSON response."""
+
+    try:
+        response = requests.post(
+            OLLAMA_URL,
+            json={
+                "model": MODEL_NAME,
+                "prompt": prompt,
+                "stream": False,
+            },
+            timeout=600,
+        )
+
+        response.raise_for_status()
+
+        data = response.json()
+        result = data.get("response", "").strip()
+
+        if not result:
+            raise RuntimeError("Ollama returned an empty response.")
+
+        if result.startswith("```"):
+            result = result.replace("```json", "", 1)
+            result = result.replace("```", "")
+            result = result.strip()
+
+        return json.loads(result)
+
+    except requests.exceptions.RequestException as error:
+        raise RuntimeError(f"Ollama connection failed: {error}")
+
+    except json.JSONDecodeError as error:
+        raise RuntimeError(f"Ollama returned invalid JSON: {error}")
+
+
 def analyze_resume(resume_text: str):
+    """Analyze a resume using the local Ollama AI model."""
+
     prompt = f"""
 You are an AI Resume Analyzer.
 
-Analyze the following resume.
+Analyze the following resume carefully.
 
-Resume:
+RESUME:
 {resume_text}
 
-Return ONLY valid JSON in exactly this format:
+Return ONLY valid JSON.
+
+Use exactly this structure:
 
 {{
   "score": 0,
@@ -28,44 +67,25 @@ Return ONLY valid JSON in exactly this format:
 }}
 
 Rules:
-- score must be an integer from 0 to 100.
-- strengths must contain 3 to 5 items.
-- weaknesses must contain 3 to 5 items.
-- missing_skills must contain 3 to 5 items.
-- ats_keywords must contain 5 to 10 relevant keywords.
-- suggestions must contain 3 to 5 practical suggestions.
-- Do not use markdown.
-- Return JSON only.
+- score must be an integer between 0 and 100
+- all other fields must be arrays of strings
+- analyze the actual resume
+- do not invent experience or skills
+- provide practical suggestions
+- do not use markdown
+- do not add explanations outside the JSON
 """
 
-    try:
-        response = requests.post(
-            OLLAMA_URL,
-            json={
-                "model": MODEL_NAME,
-                "prompt": prompt,
-                "stream": False,
-                "think": False,
-            },
-            timeout=600,
-        )
-
-        response.raise_for_status()
-
-        data = response.json()
-        result = data.get("response", "").strip()
-
-        return _parse_json_response(result)
-
-    except requests.exceptions.RequestException as error:
-        raise RuntimeError(f"Ollama connection failed: {error}")
+    return _call_ollama(prompt)
 
 
 def match_resume_with_job(resume_text: str, job_description: str):
-    prompt = f"""
-You are an AI Resume and Job Description Matching System.
+    """Compare a resume with a job description using Ollama."""
 
-Compare the resume with the job description.
+    prompt = f"""
+You are an AI Resume and Job Matching Analyzer.
+
+Compare the resume against the job description.
 
 RESUME:
 {resume_text}
@@ -73,7 +93,9 @@ RESUME:
 JOB DESCRIPTION:
 {job_description}
 
-Return ONLY valid JSON in exactly this format:
+Return ONLY valid JSON.
+
+Use exactly this structure:
 
 {{
   "match_score": 0,
@@ -84,61 +106,15 @@ Return ONLY valid JSON in exactly this format:
 }}
 
 Rules:
-- match_score must be an integer from 0 to 100.
-- matching_skills should contain skills present in both the resume and job description.
-- missing_skills should contain important job requirements missing from the resume.
-- ats_keywords should contain important keywords from the job description that are relevant for the candidate.
-- suggestions should explain how the resume could better match the job.
-- Use 3 to 8 items for each list.
-- Do not invent experience that is not present in the resume.
-- Do not use markdown.
-- Return JSON only.
+- match_score must be an integer between 0 and 100
+- matching_skills must contain skills found in both
+- missing_skills must contain important job skills missing from the resume
+- ats_keywords must contain important job description keywords
+- suggestions must be practical
+- all arrays must contain strings
+- do not invent experience
+- do not use markdown
+- do not add explanations outside the JSON
 """
 
-    try:
-        response = requests.post(
-            OLLAMA_URL,
-            json={
-                "model": MODEL_NAME,
-                "prompt": prompt,
-                "stream": False,
-                "think": False,
-            },
-            timeout=600,
-        )
-
-        response.raise_for_status()
-
-        data = response.json()
-        result = data.get("response", "").strip()
-
-        return _parse_json_response(result)
-
-    except requests.exceptions.RequestException as error:
-        raise RuntimeError(f"Ollama connection failed: {error}")
-
-
-def _parse_json_response(result: str):
-    result = result.strip()
-
-    # Remove markdown code fences if Ollama adds them
-    result = re.sub(r"^```json\s*", "", result, flags=re.IGNORECASE)
-    result = re.sub(r"^```\s*", "", result)
-    result = re.sub(r"\s*```$", "", result)
-
-    try:
-        return json.loads(result)
-    except json.JSONDecodeError:
-        # Try to find the JSON object inside the response
-        start = result.find("{")
-        end = result.rfind("}")
-
-        if start != -1 and end != -1:
-            try:
-                return json.loads(result[start:end + 1])
-            except json.JSONDecodeError:
-                pass
-
-        raise RuntimeError(
-            f"Ollama returned invalid JSON: {result}"
-        )
+    return _call_ollama(prompt)
