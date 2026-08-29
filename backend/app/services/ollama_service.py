@@ -3,7 +3,7 @@ import requests
 
 
 OLLAMA_URL = "http://host.docker.internal:11434/api/generate"
-MODEL_NAME = "qwen3:8b"
+MODEL_NAME = "qwen3:4b"
 
 
 def _call_ollama(prompt: str):
@@ -59,6 +59,7 @@ Use exactly this structure:
 
 {{
   "score": 0,
+  "ats_compatibility": "",
   "strengths": [],
   "weaknesses": [],
   "missing_skills": [],
@@ -68,7 +69,12 @@ Use exactly this structure:
 
 Rules:
 - score must be an integer between 0 and 100
-- all other fields must be arrays of strings
+- ats_compatibility must be exactly one of:
+  "Excellent", "Good", "Needs Improvement", "Poor"
+- strengths, weaknesses, missing_skills, ats_keywords and suggestions
+  must all be arrays of strings
+- assess ATS compatibility based on resume structure,
+  clarity, relevant keywords, formatting and readability
 - analyze the actual resume
 - do not invent experience or skills
 - provide practical suggestions
@@ -108,7 +114,9 @@ Use exactly this structure:
 Rules:
 - match_score must be an integer between 0 and 100
 - matching_skills must contain skills found in both
-- missing_skills must contain important job skills missing from the resume
+  the resume and job description
+- missing_skills must contain important job skills missing
+  from the resume
 - ats_keywords must contain important job description keywords
 - suggestions must be practical
 - all arrays must contain strings

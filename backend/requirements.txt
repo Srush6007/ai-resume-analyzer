@@ -1,6 +1,7 @@
 fastapi
 uvicorn
 python-multipart
+PyMuPDF
 pypdf
 requests
 pytest
