@@ -8,24 +8,33 @@ from app.services.resume_parser import (
 
 from app.services.ollama_service import (
     analyze_resume,
-    match_resume_with_job
+    match_resume_with_job,
+    OllamaConnectionError,
+    OllamaInvalidResponseError
 )
 
 
 router = APIRouter()
 
 
+# ============================================================
+# PDF TEXT EXTRACTION
+# ============================================================
+
 def extract_pdf_text(contents: bytes):
     """Extract and clean readable text from a PDF file."""
 
     try:
         # Open PDF directly from bytes using PyMuPDF
-        pdf_document = fitz.open(stream=contents, filetype="pdf")
+        pdf_document = fitz.open(
+            stream=contents,
+            filetype="pdf"
+        )
 
         text = ""
 
         for page in pdf_document:
-            text += page.get_text()
+            text += page.get_text() or ""
 
         pdf_document.close()
 
@@ -56,14 +65,20 @@ async def upload_resume(
 ):
     """Upload and analyze a resume PDF."""
 
-    # Check file type
+    # --------------------------------------------------------
+    # Validate resume file type
+    # --------------------------------------------------------
+
     if file.content_type != "application/pdf":
         raise HTTPException(
             status_code=400,
             detail="Only PDF files are allowed."
         )
 
-    # Read uploaded file
+    # --------------------------------------------------------
+    # Read uploaded resume
+    # --------------------------------------------------------
+
     contents = await file.read()
 
     if not contents:
@@ -72,23 +87,56 @@ async def upload_resume(
             detail="The uploaded file is empty."
         )
 
+    # --------------------------------------------------------
     # Extract resume text
+    # --------------------------------------------------------
+
     text = extract_pdf_text(contents)
 
+    # --------------------------------------------------------
     # Extract resume sections
+    # --------------------------------------------------------
+
     sections = extract_sections(text)
 
+    # --------------------------------------------------------
     # Analyze resume using AI
+    # --------------------------------------------------------
+
     try:
+
         ai_analysis = analyze_resume(text)
 
+    except OllamaConnectionError as error:
+
+        print(f"Ollama connection error: {error}")
+
+        raise HTTPException(
+            status_code=503,
+            detail=f"Ollama unavailable: {error}"
+        )
+
+    except OllamaInvalidResponseError as error:
+
+        print(f"Invalid AI response: {error}")
+
+        raise HTTPException(
+            status_code=502,
+            detail=f"Invalid AI response: {error}"
+        )
+
     except Exception as error:
+
         print(f"AI analysis error: {error}")
 
         raise HTTPException(
             status_code=500,
             detail=f"AI analysis failed: {error}"
         )
+
+    # --------------------------------------------------------
+    # Return result
+    # --------------------------------------------------------
 
     return {
         "filename": file.filename,
@@ -122,14 +170,20 @@ async def match_resume(
     # --------------------------------------------------------
 
     if file.content_type != "application/pdf":
+
         raise HTTPException(
             status_code=400,
             detail="Only PDF files are allowed for the resume."
         )
 
+    # --------------------------------------------------------
+    # Read uploaded resume
+    # --------------------------------------------------------
+
     contents = await file.read()
 
     if not contents:
+
         raise HTTPException(
             status_code=400,
             detail="The uploaded resume file is empty."
@@ -140,6 +194,7 @@ async def match_resume(
     # --------------------------------------------------------
 
     if not job_description and not job_file:
+
         raise HTTPException(
             status_code=400,
             detail="Please provide a job description as text or PDF."
@@ -152,6 +207,7 @@ async def match_resume(
     if job_file:
 
         if job_file.content_type != "application/pdf":
+
             raise HTTPException(
                 status_code=400,
                 detail="Job description file must be a PDF."
@@ -160,6 +216,7 @@ async def match_resume(
         job_contents = await job_file.read()
 
         if not job_contents:
+
             raise HTTPException(
                 status_code=400,
                 detail="The job description PDF is empty."
@@ -172,6 +229,7 @@ async def match_resume(
     # --------------------------------------------------------
 
     if not job_description or not job_description.strip():
+
         raise HTTPException(
             status_code=400,
             detail="Job description cannot be empty."
@@ -184,16 +242,41 @@ async def match_resume(
     resume_text = extract_pdf_text(contents)
 
     # --------------------------------------------------------
-    # Match resume with job
+    # Analyze resume + match with job
+    #
+    # This makes ONE Ollama request that returns:
+    #
+    # 1. Overall resume analysis
+    # 2. Job matching analysis
     # --------------------------------------------------------
 
     try:
-        match_result = match_resume_with_job(
+
+        result = match_resume_with_job(
             resume_text,
             job_description
         )
 
+    except OllamaConnectionError as error:
+
+        print(f"Ollama connection error: {error}")
+
+        raise HTTPException(
+            status_code=503,
+            detail=f"Ollama unavailable: {error}"
+        )
+
+    except OllamaInvalidResponseError as error:
+
+        print(f"Invalid AI response: {error}")
+
+        raise HTTPException(
+            status_code=502,
+            detail=f"Invalid AI response: {error}"
+        )
+
     except Exception as error:
+
         print(f"Job matching error: {error}")
 
         raise HTTPException(
@@ -202,7 +285,7 @@ async def match_resume(
         )
 
     # --------------------------------------------------------
-    # Return result
+    # Return both analyses
     # --------------------------------------------------------
 
     return {
@@ -210,5 +293,6 @@ async def match_resume(
         "job_description_source": (
             "pdf" if job_file else "text"
         ),
-        "match_result": match_result
+        "ai_analysis": result["ai_analysis"],
+        "match_result": result["match_result"]
     }

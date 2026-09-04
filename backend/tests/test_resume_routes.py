@@ -5,13 +5,17 @@ from fastapi.testclient import TestClient
 from pypdf import PdfWriter
 
 from app.main import app
+from app.services.ollama_service import (
+    OllamaConnectionError,
+    OllamaInvalidResponseError,
+)
 
 
 client = TestClient(app)
 
 
 def create_test_pdf():
-    """Create a valid PDF for testing."""
+    """Create a valid single-page PDF for testing."""
 
     pdf_buffer = BytesIO()
     writer = PdfWriter()
@@ -23,6 +27,26 @@ def create_test_pdf():
 
     return pdf_buffer
 
+
+def create_multi_page_pdf():
+    """Create a valid multi-page PDF for testing."""
+
+    pdf_buffer = BytesIO()
+    writer = PdfWriter()
+
+    writer.add_blank_page(width=600, height=800)
+    writer.add_blank_page(width=600, height=800)
+    writer.add_blank_page(width=600, height=800)
+
+    writer.write(pdf_buffer)
+    pdf_buffer.seek(0)
+
+    return pdf_buffer
+
+
+# ============================================================
+# RESUME UPLOAD TESTS
+# ============================================================
 
 def test_upload_resume_invalid_file_type():
     """Verify that the upload endpoint rejects non-PDF files."""
@@ -106,6 +130,117 @@ def test_upload_resume_success():
     assert data["ai_analysis"]["score"] == 80
     assert data["ai_analysis"]["ats_compatibility"] == "Good"
 
+
+def test_upload_resume_multi_page_pdf():
+    """Verify that a multi-page PDF can be processed."""
+
+    pdf = create_multi_page_pdf()
+
+    with patch(
+        "app.routes.resume.extract_pdf_text",
+        return_value=(
+            "Page one resume content.\n"
+            "Page two resume content.\n"
+            "Page three resume content."
+        ),
+    ), patch(
+        "app.routes.resume.analyze_resume",
+        return_value={
+            "score": 85,
+            "ats_compatibility": "Good",
+            "strengths": ["Python"],
+            "weaknesses": [],
+            "missing_skills": [],
+            "ats_keywords": ["Python"],
+            "suggestions": [],
+        },
+    ):
+
+        response = client.post(
+            "/resume/upload",
+            files={
+                "file": (
+                    "multi_page_resume.pdf",
+                    pdf,
+                    "application/pdf",
+                )
+            },
+        )
+
+    assert response.status_code == 200
+
+    data = response.json()
+
+    assert data["filename"] == "multi_page_resume.pdf"
+    assert "Page one resume content." in data["text"]
+    assert "Page two resume content." in data["text"]
+    assert "Page three resume content." in data["text"]
+    assert data["ai_analysis"]["score"] == 85
+
+
+def test_upload_resume_ollama_unavailable():
+    """Verify that Ollama connection failures return HTTP 503."""
+
+    pdf = create_test_pdf()
+
+    with patch(
+        "app.routes.resume.extract_pdf_text",
+        return_value="Python developer with FastAPI experience.",
+    ), patch(
+        "app.routes.resume.analyze_resume",
+        side_effect=OllamaConnectionError(
+            "Ollama connection failed."
+        ),
+    ):
+
+        response = client.post(
+            "/resume/upload",
+            files={
+                "file": (
+                    "resume.pdf",
+                    pdf,
+                    "application/pdf",
+                )
+            },
+        )
+
+    assert response.status_code == 503
+    assert "Ollama unavailable" in response.json()["detail"]
+
+
+def test_upload_resume_invalid_ai_response():
+    """Verify that invalid AI responses return HTTP 502."""
+
+    pdf = create_test_pdf()
+
+    with patch(
+        "app.routes.resume.extract_pdf_text",
+        return_value="Python developer with FastAPI experience.",
+    ), patch(
+        "app.routes.resume.analyze_resume",
+        side_effect=OllamaInvalidResponseError(
+            "Ollama returned invalid JSON."
+        ),
+    ):
+
+        response = client.post(
+            "/resume/upload",
+            files={
+                "file": (
+                    "resume.pdf",
+                    pdf,
+                    "application/pdf",
+                )
+            },
+        )
+
+    assert response.status_code == 502
+    assert "Invalid AI response" in response.json()["detail"]
+
+
+# ============================================================
+# RESUME + JOB MATCHING TESTS
+# ============================================================
 
 def test_match_resume_invalid_file_type():
     """Verify that the match endpoint rejects non-PDF resume files."""
@@ -212,11 +347,22 @@ def test_match_resume_success():
     ), patch(
         "app.routes.resume.match_resume_with_job",
         return_value={
-            "match_score": 80,
-            "matching_skills": ["Python", "FastAPI"],
-            "missing_skills": ["AWS"],
-            "ats_keywords": ["Python", "FastAPI", "AWS"],
-            "suggestions": ["Add AWS experience"],
+            "ai_analysis": {
+                "score": 85,
+                "ats_compatibility": "Good",
+                "strengths": ["Python"],
+                "weaknesses": [],
+                "missing_skills": ["AWS"],
+                "ats_keywords": ["Python", "FastAPI", "AWS"],
+                "suggestions": ["Add AWS experience"],
+            },
+            "match_result": {
+                "match_score": 80,
+                "matching_skills": ["Python", "FastAPI"],
+                "missing_skills": ["AWS"],
+                "ats_keywords": ["Python", "FastAPI", "AWS"],
+                "suggestions": ["Add AWS experience"],
+            },
         },
     ):
 
@@ -243,7 +389,12 @@ def test_match_resume_success():
 
     assert data["filename"] == "resume.pdf"
     assert data["job_description_source"] == "text"
+
+    assert "ai_analysis" in data
     assert "match_result" in data
+
+    assert data["ai_analysis"]["score"] == 85
+    assert data["ai_analysis"]["ats_compatibility"] == "Good"
 
     assert data["match_result"]["match_score"] == 80
     assert "Python" in data["match_result"]["matching_skills"]
@@ -324,11 +475,22 @@ def test_match_resume_job_pdf_success():
     ), patch(
         "app.routes.resume.match_resume_with_job",
         return_value={
-            "match_score": 85,
-            "matching_skills": ["Python", "FastAPI"],
-            "missing_skills": ["AWS"],
-            "ats_keywords": ["Python", "FastAPI", "AWS"],
-            "suggestions": ["Add AWS experience"],
+            "ai_analysis": {
+                "score": 85,
+                "ats_compatibility": "Good",
+                "strengths": ["Python"],
+                "weaknesses": [],
+                "missing_skills": ["AWS"],
+                "ats_keywords": ["Python", "FastAPI", "AWS"],
+                "suggestions": ["Add AWS experience"],
+            },
+            "match_result": {
+                "match_score": 85,
+                "matching_skills": ["Python", "FastAPI"],
+                "missing_skills": ["AWS"],
+                "ats_keywords": ["Python", "FastAPI", "AWS"],
+                "suggestions": ["Add AWS experience"],
+            },
         },
     ):
 
@@ -354,7 +516,12 @@ def test_match_resume_job_pdf_success():
 
     assert data["filename"] == "resume.pdf"
     assert data["job_description_source"] == "pdf"
+
+    assert "ai_analysis" in data
     assert "match_result" in data
+
+    assert data["ai_analysis"]["score"] == 85
+    assert data["ai_analysis"]["ats_compatibility"] == "Good"
 
     assert data["match_result"]["match_score"] == 85
     assert "Python" in data["match_result"]["matching_skills"]

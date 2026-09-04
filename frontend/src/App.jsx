@@ -1,7 +1,41 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import "./App.css";
 
 const API_URL = "http://127.0.0.1:8000";
+
+// ============================================================
+// SCORE RING
+// ============================================================
+
+function ScoreRing({ value, label, tone }) {
+  const safeValue = Number.isFinite(Number(value))
+    ? Math.max(0, Math.min(100, Number(value)))
+    : 0;
+
+  return (
+    <div className="score-ring-wrap">
+      <div
+        className={`score-ring tone-${tone}`}
+        style={{
+          background: `conic-gradient(var(--ring-color) ${
+            safeValue * 3.6
+          }deg, var(--ring-track) 0deg)`,
+        }}
+      >
+        <div className="score-ring-inner">
+          <span className="score-ring-value">{safeValue}%</span>
+        </div>
+      </div>
+
+      <span className="score-ring-label">{label}</span>
+    </div>
+  );
+}
+
+
+// ============================================================
+// APP
+// ============================================================
 
 function App() {
   const [backendStatus, setBackendStatus] = useState("Checking...");
@@ -16,13 +50,20 @@ function App() {
   const [results, setResults] = useState(null);
   const [showResults, setShowResults] = useState(false);
 
-  // ---------------- BACKEND CHECK ----------------
+  // File input references so the same file can be selected again
+  const resumeInputRef = useRef(null);
+  const jobInputRef = useRef(null);
+
+
+  // ==========================================================
+  // BACKEND CHECK
+  // ==========================================================
 
   useEffect(() => {
     fetch(`${API_URL}/health`)
       .then((response) => {
         if (!response.ok) {
-          throw new Error();
+          throw new Error("Backend unavailable");
         }
 
         setBackendStatus("Connected");
@@ -32,59 +73,155 @@ function App() {
       });
   }, []);
 
-  // ---------------- RESUME FILE ----------------
+
+  // ==========================================================
+  // RESUME FILE
+  // ==========================================================
 
   const handleResumeChange = (event) => {
-    const selectedFile = event.target.files[0];
-
-    if (!selectedFile) {
-      setResumeFile(null);
-      return;
-    }
-
-    if (selectedFile.type !== "application/pdf") {
-      setError("Please select a PDF file for your resume.");
-      setResumeFile(null);
-      return;
-    }
+    const selectedFile = event.target.files?.[0];
 
     setError("");
+
+    if (!selectedFile) {
+      return;
+    }
+
+    if (
+      selectedFile.type !== "application/pdf" &&
+      !selectedFile.name.toLowerCase().endsWith(".pdf")
+    ) {
+      setError("Please select a PDF file for your resume.");
+
+      setResumeFile(null);
+
+      if (resumeInputRef.current) {
+        resumeInputRef.current.value = "";
+      }
+
+      return;
+    }
+
     setResumeFile(selectedFile);
   };
 
-  // ---------------- JD FILE ----------------
+
+  // ==========================================================
+  // REMOVE RESUME
+  // ==========================================================
+
+  const removeResume = () => {
+    setResumeFile(null);
+    setError("");
+
+    if (resumeInputRef.current) {
+      resumeInputRef.current.value = "";
+    }
+  };
+
+
+  // ==========================================================
+  // JOB DESCRIPTION FILE
+  // ==========================================================
 
   const handleJobFileChange = (event) => {
-    const selectedFile = event.target.files[0];
-
-    if (!selectedFile) {
-      setJobFile(null);
-      return;
-    }
-
-    if (selectedFile.type !== "application/pdf") {
-      setError("Job description must be a PDF file.");
-      setJobFile(null);
-      return;
-    }
+    const selectedFile = event.target.files?.[0];
 
     setError("");
+
+    if (!selectedFile) {
+      return;
+    }
+
+    if (
+      selectedFile.type !== "application/pdf" &&
+      !selectedFile.name.toLowerCase().endsWith(".pdf")
+    ) {
+      setError("Job description must be a PDF file.");
+
+      setJobFile(null);
+
+      if (jobInputRef.current) {
+        jobInputRef.current.value = "";
+      }
+
+      return;
+    }
+
+    // If JD PDF is selected, clear pasted JD text
+    setJobDescription("");
+
     setJobFile(selectedFile);
   };
 
-  // ---------------- ANALYZE ----------------
+
+  // ==========================================================
+  // REMOVE JOB DESCRIPTION FILE
+  // ==========================================================
+
+  const removeJobFile = () => {
+    setJobFile(null);
+    setError("");
+
+    if (jobInputRef.current) {
+      jobInputRef.current.value = "";
+    }
+  };
+
+
+  // ==========================================================
+  // JOB DESCRIPTION TEXT
+  // ==========================================================
+
+  const handleJobDescriptionChange = (event) => {
+    setJobDescription(event.target.value);
+    setError("");
+
+    // If user starts typing, remove uploaded JD PDF
+    if (jobFile) {
+      setJobFile(null);
+
+      if (jobInputRef.current) {
+        jobInputRef.current.value = "";
+      }
+    }
+  };
+
+
+  // ==========================================================
+  // ANALYZE
+  // ==========================================================
 
   const handleAnalyze = async () => {
     setError("");
+
+    // ------------------------------------------
+    // Validate resume
+    // ------------------------------------------
 
     if (!resumeFile) {
       setError("Please upload your resume PDF first.");
       return;
     }
 
+    // ------------------------------------------
+    // Validate JD
+    // ------------------------------------------
+
     if (jobDescription.trim() && jobFile) {
       setError(
         "Please provide the job description either as text OR as a PDF, not both."
+      );
+      return;
+    }
+
+    // ------------------------------------------
+    // Backend status
+    // ------------------------------------------
+
+    if (backendStatus !== "Connected") {
+      setError(
+        "The backend is not connected. Please make sure the backend server is running."
       );
       return;
     }
@@ -94,7 +231,9 @@ function App() {
     try {
       let response;
 
-      // -------- RESUME + JD MATCH --------
+      // ======================================================
+      // RESUME + JOB DESCRIPTION
+      // ======================================================
 
       if (jobDescription.trim() || jobFile) {
         const formData = new FormData();
@@ -102,68 +241,173 @@ function App() {
         formData.append("file", resumeFile);
 
         if (jobDescription.trim()) {
-          formData.append("job_description", jobDescription);
+          formData.append(
+            "job_description",
+            jobDescription.trim()
+          );
         }
 
         if (jobFile) {
           formData.append("job_file", jobFile);
         }
 
-        response = await fetch(`${API_URL}/resume/match`, {
-          method: "POST",
-          body: formData,
-        });
+        response = await fetch(
+          `${API_URL}/resume/match`,
+          {
+            method: "POST",
+            body: formData,
+          }
+        );
       }
 
-      // -------- NORMAL RESUME ANALYSIS --------
+      // ======================================================
+      // RESUME ONLY
+      // ======================================================
 
       else {
         const formData = new FormData();
 
         formData.append("file", resumeFile);
 
-        response = await fetch(`${API_URL}/resume/upload`, {
-          method: "POST",
-          body: formData,
-        });
+        response = await fetch(
+          `${API_URL}/resume/upload`,
+          {
+            method: "POST",
+            body: formData,
+          }
+        );
       }
 
-      const data = await response.json();
+      // ======================================================
+      // READ RESPONSE
+      // ======================================================
+
+      let data;
+
+      try {
+        data = await response.json();
+      } catch {
+        throw new Error(
+          "The server returned an invalid response."
+        );
+      }
+
+      // ======================================================
+      // HANDLE ERRORS
+      // ======================================================
 
       if (!response.ok) {
-        throw new Error(data.detail || "Something went wrong.");
+        if (response.status === 503) {
+          throw new Error(
+            "Ollama is unavailable. Please make sure Ollama is running."
+          );
+        }
+
+        if (response.status === 502) {
+          throw new Error(
+            "The AI returned an invalid response. Please try again."
+          );
+        }
+
+        throw new Error(
+          data.detail || "Something went wrong while analyzing your resume."
+        );
       }
+
+      // ======================================================
+      // VALIDATE RESULT
+      // ======================================================
+
+      if (!data.ai_analysis) {
+        throw new Error(
+          "The analysis response was incomplete. Please try again."
+        );
+      }
+
+      if (jobDescription.trim() || jobFile) {
+        if (!data.match_result) {
+          throw new Error(
+            "The job matching result was incomplete. Please try again."
+          );
+        }
+      }
+
+      // ======================================================
+      // SHOW RESULTS
+      // ======================================================
 
       setResults(data);
       setShowResults(true);
+
+      // Scroll to top of results
+      window.scrollTo({
+        top: 0,
+        behavior: "smooth",
+      });
     } catch (err) {
+      console.error("Analysis error:", err);
+
       setError(
-        err.message || "Could not connect to the backend."
+        err.message ||
+          "Could not connect to the backend. Please try again."
       );
     } finally {
       setLoading(false);
     }
   };
 
-  // ---------------- BACK ----------------
+
+  // ==========================================================
+  // RESET / BACK
+  // ==========================================================
 
   const handleBack = () => {
     setShowResults(false);
     setResults(null);
     setError("");
+
+    // Clear selected files
+    setResumeFile(null);
+    setJobFile(null);
+    setJobDescription("");
+
+    if (resumeInputRef.current) {
+      resumeInputRef.current.value = "";
+    }
+
+    if (jobInputRef.current) {
+      jobInputRef.current.value = "";
+    }
+
+    window.scrollTo({
+      top: 0,
+      behavior: "smooth",
+    });
   };
 
-  // =========================================================
+
+  // ==========================================================
   // RESULTS PAGE
-  // =========================================================
+  // ==========================================================
 
   if (showResults && results) {
     const match = results.match_result;
+    const analysis = results.ai_analysis;
+
+    const atsValue =
+      analysis?.ats_compatibility || "Needs Improvement";
+
+    const atsClass = atsValue
+      .toLowerCase()
+      .replace(/\s+/g, "-");
+
 
     return (
       <div className="app">
 
-        {/* HEADER */}
+        {/* ====================================================
+            HEADER
+            ==================================================== */}
 
         <header className="header">
           <div className="header-content">
@@ -180,7 +424,9 @@ function App() {
         </header>
 
 
-        {/* MAIN */}
+        {/* ====================================================
+            MAIN
+            ==================================================== */}
 
         <main className="main">
 
@@ -191,21 +437,166 @@ function App() {
             <div className="results-heading">
 
               <h1>
-                Analysis Results
+                Analysis results
               </h1>
 
               <p>
-                Here is the AI-powered analysis of your resume.
+                Here's what the AI found in your resume.
               </p>
 
             </div>
 
 
-            {/* RESUME CARD */}
+            {/* =================================================
+                SCORE OVERVIEW
+                ================================================= */}
 
-            <div className="results-card">
+            <div
+              className={`score-overview ${
+                match ? "has-match" : "resume-only"
+              }`}
+            >
+
+              {/* RESUME SCORE */}
+
+              <div className="overview-card overview-resume">
+
+                <div className="overview-card-top">
+
+                  <span className="overview-eyebrow">
+                    RESUME
+                  </span>
+
+                  <span className="overview-icon">
+                    ✦
+                  </span>
+
+                </div>
+
+                <div className="overview-main">
+
+                  <div className="overview-score">
+                    {analysis?.score ?? 0}
+                    <span>%</span>
+                  </div>
+
+                  <div className="overview-label">
+                    Resume score
+                  </div>
+
+                </div>
+
+                <div className="overview-progress">
+                  <span
+                    style={{
+                      width: `${Math.max(
+                        0,
+                        Math.min(
+                          100,
+                          Number(analysis?.score) || 0
+                        )
+                      )}%`,
+                    }}
+                  />
+                </div>
+
+              </div>
+
+
+              {/* JOB MATCH */}
+
+              {match && (
+                <div className="overview-card overview-match">
+
+                  <div className="overview-card-top">
+
+                    <span className="overview-eyebrow">
+                      JOB MATCH
+                    </span>
+
+                    <span className="overview-icon">
+                      ↗
+                    </span>
+
+                  </div>
+
+                  <div className="overview-main">
+
+                    <div className="overview-score">
+                      {match.match_score ?? 0}
+                      <span>%</span>
+                    </div>
+
+                    <div className="overview-label">
+                      Role match
+                    </div>
+
+                  </div>
+
+                  <div className="overview-progress">
+                    <span
+                      style={{
+                        width: `${Math.max(
+                          0,
+                          Math.min(
+                            100,
+                            Number(match.match_score) || 0
+                          )
+                        )}%`,
+                      }}
+                    />
+                  </div>
+
+                </div>
+              )}
+
+
+              {/* ATS */}
+
+              <div className="overview-card overview-ats">
+
+                <div className="overview-card-top">
+
+                  <span className="overview-eyebrow">
+                    ATS CHECK
+                  </span>
+
+                  <span className="overview-icon">
+                    ✓
+                  </span>
+
+                </div>
+
+                <div className="overview-main ats-overview-main">
+
+                  <span
+                    className={`ats-badge overview-ats-badge ${atsClass}`}
+                  >
+                    {atsValue}
+                  </span>
+
+                  <div className="overview-label">
+                    Compatibility
+                  </div>
+
+                </div>
+
+              </div>
+
+            </div>
+
+
+            {/* =================================================
+                RESUME FILE CARD
+                ================================================= */}
+
+            <div className="results-card resume-card">
 
               <div className="result-header">
+
+                <div className="result-icon tone-neutral">
+                  📄
+                </div>
 
                 <div>
 
@@ -226,38 +617,34 @@ function App() {
 
             {/* =================================================
                 JOB MATCH RESULTS
-               ================================================= */}
+                ================================================= */}
 
             {match && (
+
               <div className="results-card">
 
-                <h2>
-                  Resume–Job Match
-                </h2>
+                <div className="card-heading">
+
+                  <span className="card-icon tone-blue">
+                    ⇄
+                  </span>
+
+                  <h2>
+                    Resume–job match
+                  </h2>
+
+                </div>
 
 
                 {/* MATCH SCORE */}
 
                 <div className="match-section score-section">
 
-                  <span className="score-label">
-                    Match Score
-                  </span>
-
-                  <div className="score-value">
-                    {match.match_score}%
-                  </div>
-
-                  <div className="score-bar">
-
-                    <div
-                      className="score-fill"
-                      style={{
-                        width: `${match.match_score}%`,
-                      }}
-                    />
-
-                  </div>
+                  <ScoreRing
+                    value={match.match_score}
+                    label="Match score"
+                    tone="blue"
+                  />
 
                 </div>
 
@@ -270,7 +657,7 @@ function App() {
                     <div className="match-section">
 
                       <h3>
-                        Matching Skills
+                        Matching skills
                       </h3>
 
                       <div className="result-list">
@@ -279,7 +666,7 @@ function App() {
                           (skill, index) => (
 
                             <span
-                              className="result-tag"
+                              className="result-tag matching-tag"
                               key={index}
                             >
                               {skill}
@@ -302,7 +689,7 @@ function App() {
                     <div className="match-section">
 
                       <h3>
-                        Missing Skills
+                        Missing skills
                       </h3>
 
                       <div className="result-list">
@@ -311,7 +698,7 @@ function App() {
                           (skill, index) => (
 
                             <span
-                              className="result-tag"
+                              className="result-tag missing-tag"
                               key={index}
                             >
                               {skill}
@@ -334,7 +721,7 @@ function App() {
                     <div className="match-section">
 
                       <h3>
-                        ATS Keywords
+                        ATS keywords
                       </h3>
 
                       <div className="result-list">
@@ -343,7 +730,7 @@ function App() {
                           (keyword, index) => (
 
                             <span
-                              className="result-tag"
+                              className="result-tag keyword-tag"
                               key={index}
                             >
                               {keyword}
@@ -366,7 +753,7 @@ function App() {
                     <div className="match-section">
 
                       <h3>
-                        Suggestions for Improvement
+                        Suggestions for improvement
                       </h3>
 
                       <div className="suggestion-list">
@@ -402,45 +789,60 @@ function App() {
 
 
             {/* =================================================
-                NORMAL AI RESUME ANALYSIS
-               ================================================= */}
+                AI RESUME ANALYSIS
+                ================================================= */}
 
-            {results.ai_analysis && !match && (
+            {analysis && (
 
               <div className="results-card">
 
-                <h2>
-                  AI Resume Analysis
-                </h2>
+                <div className="card-heading">
 
-                <div className="match-section">
+                  <span className="card-icon tone-violet">
+                    ✦
+                  </span>
 
-                  <h3>
-                    Score
-                  </h3>
-
-                  <div className="score-value">
-                    {results.ai_analysis.score}%
-                  </div>
+                  <h2>
+                    AI resume analysis
+                  </h2>
 
                 </div>
 
 
-                <div className="match-section">
+                {/* RESUME SCORE */}
 
-                  <h3>
-                    ATS Compatibility
-                  </h3>
+                <div className="match-section score-section">
 
-                  <p className="suggestion-text">
-                    {results.ai_analysis.ats_compatibility}
-                  </p>
+                  <ScoreRing
+                    value={analysis.score}
+                    label="Resume score"
+                    tone="violet"
+                  />
 
                 </div>
 
 
-                {Array.isArray(results.ai_analysis.strengths) &&
-                  results.ai_analysis.strengths.length > 0 && (
+                {/* ATS COMPATIBILITY */}
+
+                <div className="match-section ats-section">
+
+                  <h3>
+                    ATS compatibility
+                  </h3>
+
+                  <span
+                    className={`ats-badge ${atsClass}`}
+                  >
+                    {atsValue}
+                  </span>
+
+                </div>
+
+
+                {/* STRENGTHS */}
+
+                {Array.isArray(analysis.strengths) &&
+                  analysis.strengths.length > 0 && (
 
                     <div className="match-section">
 
@@ -450,11 +852,11 @@ function App() {
 
                       <div className="result-list">
 
-                        {results.ai_analysis.strengths.map(
+                        {analysis.strengths.map(
                           (item, index) => (
 
                             <span
-                              className="result-tag"
+                              className="result-tag strength-tag"
                               key={index}
                             >
                               {item}
@@ -469,8 +871,10 @@ function App() {
                   )}
 
 
-                {Array.isArray(results.ai_analysis.weaknesses) &&
-                  results.ai_analysis.weaknesses.length > 0 && (
+                {/* WEAKNESSES */}
+
+                {Array.isArray(analysis.weaknesses) &&
+                  analysis.weaknesses.length > 0 && (
 
                     <div className="match-section">
 
@@ -480,11 +884,11 @@ function App() {
 
                       <div className="result-list">
 
-                        {results.ai_analysis.weaknesses.map(
+                        {analysis.weaknesses.map(
                           (item, index) => (
 
                             <span
-                              className="result-tag"
+                              className="result-tag weakness-tag"
                               key={index}
                             >
                               {item}
@@ -499,22 +903,24 @@ function App() {
                   )}
 
 
-                {Array.isArray(results.ai_analysis.missing_skills) &&
-                  results.ai_analysis.missing_skills.length > 0 && (
+                {/* MISSING SKILLS */}
+
+                {Array.isArray(analysis.missing_skills) &&
+                  analysis.missing_skills.length > 0 && (
 
                     <div className="match-section">
 
                       <h3>
-                        Missing Skills
+                        Missing skills
                       </h3>
 
                       <div className="result-list">
 
-                        {results.ai_analysis.missing_skills.map(
+                        {analysis.missing_skills.map(
                           (item, index) => (
 
                             <span
-                              className="result-tag"
+                              className="result-tag missing-tag"
                               key={index}
                             >
                               {item}
@@ -529,22 +935,24 @@ function App() {
                   )}
 
 
-                {Array.isArray(results.ai_analysis.ats_keywords) &&
-                  results.ai_analysis.ats_keywords.length > 0 && (
+                {/* ATS KEYWORDS */}
+
+                {Array.isArray(analysis.ats_keywords) &&
+                  analysis.ats_keywords.length > 0 && (
 
                     <div className="match-section">
 
                       <h3>
-                        ATS Keywords
+                        ATS keywords
                       </h3>
 
                       <div className="result-list">
 
-                        {results.ai_analysis.ats_keywords.map(
+                        {analysis.ats_keywords.map(
                           (item, index) => (
 
                             <span
-                              className="result-tag"
+                              className="result-tag keyword-tag"
                               key={index}
                             >
                               {item}
@@ -559,18 +967,20 @@ function App() {
                   )}
 
 
-                {Array.isArray(results.ai_analysis.suggestions) &&
-                  results.ai_analysis.suggestions.length > 0 && (
+                {/* SUGGESTIONS */}
+
+                {Array.isArray(analysis.suggestions) &&
+                  analysis.suggestions.length > 0 && (
 
                     <div className="match-section">
 
                       <h3>
-                        Suggestions for Improvement
+                        Suggestions for improvement
                       </h3>
 
                       <div className="suggestion-list">
 
-                        {results.ai_analysis.suggestions.map(
+                        {analysis.suggestions.map(
                           (suggestion, index) => (
 
                             <div
@@ -600,13 +1010,15 @@ function App() {
             )}
 
 
-            {/* BACK BUTTON */}
+            {/* =================================================
+                BACK BUTTON
+                ================================================= */}
 
             <button
               className="back-button"
               onClick={handleBack}
             >
-              ← Analyze Another Resume
+              ← Analyze another resume
             </button>
 
           </div>
@@ -618,14 +1030,16 @@ function App() {
   }
 
 
-  // =========================================================
+  // ============================================================
   // UPLOAD PAGE
-  // =========================================================
+  // ============================================================
 
   return (
     <div className="app">
 
-      {/* HEADER */}
+      {/* ======================================================
+          HEADER
+          ====================================================== */}
 
       <header className="header">
 
@@ -644,7 +1058,9 @@ function App() {
       </header>
 
 
-      {/* MAIN */}
+      {/* ======================================================
+          MAIN
+          ====================================================== */}
 
       <main className="main">
 
@@ -652,32 +1068,50 @@ function App() {
 
         <section className="hero">
 
+          <div className="hero-badge">
+
+            <span className="hero-badge-dot" />
+
+            AI resume intelligence
+
+          </div>
+
           <h1>
-            AI-Powered Resume Analyzer
+            Know exactly what to fix
+            <br />
+            before a recruiter sees it
           </h1>
 
           <p>
-            Analyze your resume and get useful feedback using AI.
+            Upload your resume for an instant score, ATS check,
+            and — if you add a job description — a match report.
           </p>
 
         </section>
 
 
-        {/* ANALYZER CARD */}
+        {/* ====================================================
+            ANALYZER CARD
+            ==================================================== */}
 
         <section className="analyzer-card">
 
-
-          {/* RESUME */}
+          {/* ==================================================
+              RESUME
+              ================================================== */}
 
           <div className="section">
 
+            <div className="section-icon">
+              ▧
+            </div>
+
             <h2 className="section-title">
-              ▧ Upload Resume
+              Upload resume
             </h2>
 
             <p className="section-subtitle">
-              Upload your resume in PDF format.
+              PDF format only.
             </p>
 
 
@@ -692,10 +1126,11 @@ function App() {
               </div>
 
               <div className="upload-hint">
-                PDF files only
+                PDF files only, up to a few MB
               </div>
 
               <input
+                ref={resumeInputRef}
                 className="file-input"
                 type="file"
                 accept=".pdf,application/pdf"
@@ -703,10 +1138,28 @@ function App() {
               />
 
 
+              {/* SELECTED RESUME */}
+
               {resumeFile && (
 
                 <div className="selected-file">
-                  ✓ {resumeFile.name}
+
+                  <span className="selected-file-check">
+                    ✓
+                  </span>
+
+                  <span className="selected-file-name">
+                    {resumeFile.name}
+                  </span>
+
+                  <button
+                    type="button"
+                    className="remove-file-button"
+                    onClick={removeResume}
+                  >
+                    Remove
+                  </button>
+
                 </div>
 
               )}
@@ -716,48 +1169,59 @@ function App() {
           </div>
 
 
-          {/* DIVIDER */}
+          {/* ==================================================
+              DIVIDER
+              ================================================== */}
 
           <div className="divider">
+
             <span>
               Optional
             </span>
+
           </div>
 
 
-          {/* JOB DESCRIPTION */}
+          {/* ==================================================
+              JOB DESCRIPTION
+              ================================================== */}
 
           <section className="jd-section">
 
             <h2 className="jd-title">
-              ▣ Job Description{" "}
+
+              Job description
+
               <span className="jd-optional">
-                (Optional)
+                Optional
               </span>
+
             </h2>
 
-
             <p className="jd-description">
-              Add a job description to see how well your resume matches the role.
+              Add the role you're applying for to see how well
+              your resume matches it.
             </p>
 
 
+            {/* JD TEXT */}
+
             <textarea
               className="jd-textarea"
-              placeholder="Paste the job description here..."
+              placeholder="Paste the job description here…"
               value={jobDescription}
-              onChange={(event) =>
-                setJobDescription(event.target.value)
-              }
+              onChange={handleJobDescriptionChange}
             />
 
 
             {/* OR */}
 
             <div className="divider">
+
               <span>
-                OR
+                Or
               </span>
+
             </div>
 
 
@@ -774,7 +1238,7 @@ function App() {
                 <div>
 
                   <div className="jd-file-title">
-                    Upload Job Description
+                    Upload job description
                   </div>
 
                   <div className="jd-file-hint">
@@ -785,8 +1249,8 @@ function App() {
 
               </div>
 
-
               <input
+                ref={jobInputRef}
                 className="file-input"
                 type="file"
                 accept=".pdf,application/pdf"
@@ -796,10 +1260,28 @@ function App() {
             </div>
 
 
+            {/* SELECTED JD */}
+
             {jobFile && (
 
               <div className="selected-jd-file">
-                ✓ {jobFile.name}
+
+                <span className="selected-file-check">
+                  ✓
+                </span>
+
+                <span className="selected-file-name">
+                  {jobFile.name}
+                </span>
+
+                <button
+                  type="button"
+                  className="remove-file-button"
+                  onClick={removeJobFile}
+                >
+                  Remove
+                </button>
+
               </div>
 
             )}
@@ -807,38 +1289,65 @@ function App() {
           </section>
 
 
-          {/* ANALYZE BUTTON */}
+          {/* ==================================================
+              ANALYZE BUTTON
+              ================================================== */}
 
           <button
             className="analyze-button"
             onClick={handleAnalyze}
             disabled={loading}
           >
-            {loading
-              ? "Analyzing..."
-              : "✦ Analyze Resume"}
+
+            {loading ? (
+              <>
+                <span className="button-spinner" />
+                Analyzing…
+              </>
+            ) : (
+              "✦ Analyze resume"
+            )}
+
           </button>
 
 
-          {/* BACKEND STATUS */}
+          {/* ==================================================
+              BACKEND STATUS
+              ================================================== */}
 
           <div
             className={
               backendStatus === "Connected"
                 ? "backend-status connected"
-                : "backend-status"
+                : backendStatus === "Checking..."
+                ? "backend-status"
+                : "backend-status error"
             }
           >
+
+            <span className="status-dot" />
+
             Backend status: {backendStatus}
+
           </div>
 
 
-          {/* ERROR */}
+          {/* ==================================================
+              ERROR
+              ================================================== */}
 
           {error && (
 
             <div className="error-message">
-              {error}
+
+              <span className="error-icon">
+                !
+              </span>
+
+              <span>
+                {error}
+              </span>
+
             </div>
 
           )}

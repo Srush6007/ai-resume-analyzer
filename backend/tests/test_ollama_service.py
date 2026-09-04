@@ -54,11 +54,22 @@ def test_match_resume_with_job_success():
     mock_response.json.return_value = {
         "response": """
         {
-            "match_score": 80,
-            "matching_skills": ["Python", "FastAPI"],
-            "missing_skills": ["AWS"],
-            "ats_keywords": ["Python", "FastAPI", "AWS"],
-            "suggestions": ["Add AWS experience"]
+            "ai_analysis": {
+                "score": 85,
+                "ats_compatibility": "Good",
+                "strengths": ["Python"],
+                "weaknesses": [],
+                "missing_skills": ["AWS"],
+                "ats_keywords": ["Python", "FastAPI", "AWS"],
+                "suggestions": ["Add AWS experience"]
+            },
+            "match_result": {
+                "match_score": 80,
+                "matching_skills": ["Python", "FastAPI"],
+                "missing_skills": ["AWS"],
+                "ats_keywords": ["Python", "FastAPI", "AWS"],
+                "suggestions": ["Add AWS experience"]
+            }
         }
         """
     }
@@ -74,6 +85,13 @@ def test_match_resume_with_job_success():
         )
 
         assert result
-        assert result["match_score"] == 80
-        assert "Python" in result["matching_skills"]
-        assert "AWS" in result["missing_skills"]
+
+        assert "ai_analysis" in result
+        assert "match_result" in result
+
+        assert result["ai_analysis"]["score"] == 85
+        assert result["ai_analysis"]["ats_compatibility"] == "Good"
+
+        assert result["match_result"]["match_score"] == 80
+        assert "Python" in result["match_result"]["matching_skills"]
+        assert "AWS" in result["match_result"]["missing_skills"]
